@@ -12,3 +12,24 @@ Through pip
 ```bash
 pip install daak
 ```
+
+## Usage
+
+The main class to use is called `Run`
+
+```python
+import asyncio
+
+from daak.process import Run
+
+def which(prog: str):
+    return Run("which", args=[prog]).run(throw=False) 
+
+async def main():
+    _, process = await which("poetry")
+    print(process.returncode)
+
+if __name__ == "__main__":
+    with asyncio.Runner() as runner:
+        runner.run(main())
+```
