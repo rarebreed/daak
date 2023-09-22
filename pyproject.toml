@@ -1,14 +1,33 @@
 [tool.poetry]
 name = "daak"
-version = "0.1.0"
+version = "0.1.1"
 description = "Asynchronous subprocess runner"
 authors = ["Sean Toner <placeoftheway@gmail.com>"]
 readme = "README.md"
 
 [tool.poetry.dependencies]
-python = "^3.11"
+python = "^3.9"
 
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4.2"
+ruff = "^0.0.280"
+pytest-asyncio = "^0.21.1"
+autopep8 = "^2.0.4"
 
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
+[tool.autopep8]
+max_line_length = 120
+ignore = ["ES01", "W6"]
+recursive = true
+aggressive = 2
+exclude = ".venv/"
+
+[tool.ruff]
+select = ["E", "F", "B"]
+line-length = 120  # ignore ES01
+unfixable = ["B"]  # don't fix bugbear
+ignore = ["B008"]

@@ -1,15 +1,15 @@
-"""This is a python 3.9 compatible version of process.py that doesn't use match or any other 3.10+ feature
+"""This module contains classes to help execute subprocesses asynchronously.  This allows one to execute and grab
+the child process output and continue with other tasks.
 """
 
 import asyncio
 from asyncio.subprocess import Process
 from dataclasses import dataclass, field
+import os
+from os import _Environ
 from pathlib import Path
 from subprocess import PIPE
-import time
-from typing import IO, Any
-
-from excursor.func import Maybe
+from typing import IO, Any, Literal
 
 
 @dataclass
@@ -25,6 +25,7 @@ class Run:
     text: bool | None = None
     sudo: bool = False
     output: str = ""
+    env: _Environ[str] | None = field(repr=False, default=None)
 
     def __post_init__(self):
         if self.cmd.startswith("sudo") and not self.sudo:
@@ -33,6 +34,9 @@ class Run:
         # If there's a space in command, we have to run as a shell command
         if " " in self.cmd:
             self.shell = True
+
+        if self.env is None:
+            self.env = os.environ
 
     def __call__(self, *, pw: str | None = None):
         if self.shell:
@@ -61,7 +65,8 @@ class Run:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             start_new_session=True,
-            cwd=self.cwd
+            cwd=self.cwd,
+            env=self.env
         )
         return await self._get_output(proc, pw)
 
@@ -79,56 +84,61 @@ class Run:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             start_new_session=True,
-            cwd=self.cwd
+            cwd=self.cwd,
+            env=self.env
         )
         return await self._get_output(proc, pw)
 
+    async def _read_stream(self, proc: Process, stream: Literal["stdout", "stderr"]):
+        std_stream = proc.stdout if stream == "stdout" else proc.stderr
+        while std_stream is not None and not std_stream.at_eof():
+            out = await std_stream.readline()
+            out = out.decode()
+            self.output += out
+            print(out, end="")
+
     async def _get_output(self, proc: Process, pw: str | None):
         # Read the lines in stderr
-        if self.sudo and type(pw) == "str":
-            while True:
-                if proc.stderr is None:
-                    time.sleep(1)
-                    continue
-                line = await proc.stderr.readuntil(b": ")
-                line = line.decode()
+        match [self.sudo, pw]:
+            case [True, str()]:
+                while True:
+                    if proc.stderr is None:
+                        break
+                    line = await proc.stderr.readuntil(b": ")
+                    line = line.decode()
 
-                if proc.stdin is None:
-                    break
+                    if self.sudo and line.startswith("[sudo]"):
+                        print(line)
+                    if proc.stdin is None:
+                        raise Exception("no stdin on child process")
+                    else:
+                        proc.stdin.write(f"{pw}\n".encode())
+                        break
+            case [True, None]:
+                raise Exception(
+                    "self.sudo was True, but no password was provided")
+            case _:
+                ...
 
-                if self.sudo and line.startswith("[sudo]"):
-                    print(line)
-                    proc.stdin.write(f"{pw}\n".encode())
-                    break
-        elif self.sudo and pw is None:
-            raise Exception("self.sudo was True, but no password was provided")
-        else:
-            ...
-
-        while True:
-            m_stdout = Maybe(inner=proc.stdout)
-            m_stderr = Maybe(inner=proc.stderr)
-            out = (m_stdout
-                   .map_async(lambda o: o.readline())
-                   .map(lambda b: b.decode()))
-            if out.inner is not None:
-                self.output += out.inner
-                print(out, end="")
-
-            err = (m_stderr
-                   .map_async(lambda o: o.readline())
-                   .map(lambda b: b.decode()))
-            if err.inner is not None:
-                self.output += err.inner
-                print(err, end="")
-
-            if proc.stdout is not None and proc.stdout.at_eof():
-                break
+        out_task = asyncio.create_task(self._read_stream(proc, "stdout"))
+        err_task = asyncio.create_task(self._read_stream(proc, "stderr"))
+        await out_task
+        await err_task
 
         return proc
 
 
+__all__ = ["Run"]
+
+
 if __name__ == "__main__":
+    async def run1():
+        runner1 = Run("iostat", ["2", "2"])
+        await runner1.run()
+
+    async def run2():
+        runner2 = Run("echo 'hi sean' > hi.text", shell=True)
+        await runner2.run()
 
     async def main():
         run = Run(cmd="ls", args=["-al", "/usr/local"], shell=True)
@@ -138,13 +148,15 @@ if __name__ == "__main__":
 
         # Run all the subprocesses concurrently
         multi = await asyncio.gather(
+            run2(),
             run(),
+            # run1(),
         )
         # note, we don't have to return multi
-        print(multi[0])
-    # asyncio.run(main())
+        print(multi[1].stdout)
+    asyncio.run(main())
 
-    run = Run(cmd="sudo dnf", args=["update", "-y"])
-    with asyncio.Runner() as launcher:
-        pw = input("Password: ")
-        launcher.run(run(pw=pw))
+    # run = Run(cmd="sudo dnf", args=["update", "-y"])
+    # with asyncio.Runner() as launcher:
+    #     pw = input("Password: ")
+    #     launcher.run(run(pw=pw))
